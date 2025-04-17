@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Labour Plan App – Complete</title>
+  <style>
+    /* ---------- Global & Layout ---------- */
+    body { font-family: Arial, sans-serif; margin:0; padding:0;
+      background: url('background.jpg') no-repeat center center fixed;
+      background-size: cover;
+    }
+    .container {
+      background: rgba(255,255,255,0.93);
+      margin: 40px auto; padding:20px;
+      max-width:900px; border-radius:8px;
+      box-shadow:0 4px 10px rgba(0,0,0,0.2);
+    }
+    header.site-header {
+      background-color:#e60000; padding:10px 20px;
+      text-align:center;
+    }
+    header.site-header img.logo { max-height:60px; }
+    h1,h2,h3,h4,h5 { color:#e60000; margin:0.5em 0; }
+    .button {
+      background-color:#007e8f; color:white; border:none;
+      padding:12px 24px; margin:10px; font-size:16px;
+      border-radius:6px; cursor:pointer;
+      transition:background-color 0.3s;
+    }
+    .button:hover { background-color:#005e6b; }
+    #adminTab { position:fixed; top:10px; left:10px; z-index:9999; }
+    #adminTab .button { padding:6px 12px; font-size:14px; }
+    #adminPanel {
+      position:fixed; top:50px; left:10px;
+      background:white; border:1px solid #ccc;
+      padding:20px; z-index:9999; max-width:300px;
+      border-radius:4px;
+    }
+    .hidden { display:none!important; }
+    .role-select, .user-tabs, .manager-tabs,
+    .dashboard-mode-tabs, .dept-buttons, .category-buttons {
+      display:flex; flex-wrap:wrap; gap:10px; justify-content:center;
+    }
+    input, select, textarea {
+      padding:8px; margin:5px 0 15px; width:100%;
+      box-sizing:border-box; border:1px solid #ccc;
+      border-radius:4px;
+    }
+    textarea { resize:vertical; }
+    .back-button {
+      margin-bottom:10px; display:inline-block;
+      cursor:pointer; color:#007e6b;
+    }
+    canvas { margin-top:20px; max-width:100%; height:300px; }
+    .user-tabs .button.active,
+    .manager-tabs .button.active,
+    .dashboard-mode-tabs .button.active {
+      background-color:#005e6b;
+    }
+    .total-display {
+      text-align:right; font-weight:bold; margin-top:20px;
+    }
+    table.mid-day-table, table.selection-table {
+      width:100%; border-collapse:collapse;
+    }
+    table.mid-day-table th, table.mid-day-table td,
+    table.selection-table th, table.selection-table td {
+      border:1px solid #ccc; padding:8px; text-align:center;
+    }
+    table.mid-day-table th, table.selection-table th {
+      background-color:#f2f2f2;
+    }
+    .excess-hours { color:red; font-weight:bold; }
+    /* ---------- Modal Styles ---------- */
+    .modal {
+      position:fixed; top:0; left:0; width:100%; height:100%;
+      background:rgba(0,0,0,0.5);
+      display:flex; align-items:center; justify-content:center;
+    }
+    .modal-content {
+      background:#fff; padding:20px; border-radius:4px;
+      position:relative; width:300px;
+    }
+    .modal-close {
+      position:absolute; top:8px; right:12px;
+      font-size:24px; cursor:pointer;
+    }
+  </style>
+
+  <!-- External Libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <!-- Chart.js + DataLabels plugin -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+  <script>
+    Chart.register(ChartDataLabels);
+  </script>
+</head>
+<body>
+  <!-- Admin Tab -->
+  <div id="adminTab">
+    <button class="button" onclick="openAdminPanel()">Admin</button>
+  </div>
+  <div id="adminPanel" class="hidden">
+    <h4>Admin Panel</h4>
+    <button class="button" onclick="generatePDFReport()">Generate PDF Report</button>
+    <button class="button" onclick="closeAdminPanel()" style="background:#e60000">Close</button>
+  </div>
+
+  <!-- Site Header -->
+  <header class="site-header">
+    <img class="logo" src="1.png" alt="DB Schenker Logo">
+  </header>
+
+  <div class="container">
+    <!-- Login Screen -->
+    <div id="login-screen">
+      <h1>Shift plan</h1>
+      <div class="role-select" style="flex-direction:column;">
+        <button class="button" style="width:200px" onclick="setRole('user')">User</button>
+        <button class="button" style="width:200px" onclick="managerLogin()">Manager</button>
+        <button class="button" style="width:200px" onclick="setRole('selection')">Selection Availability</button>
+      </div>
+    </div>
+
+    <!-- Main App Content -->
+    <div id="app-content" class="hidden">
+      <span class="back-button" onclick="logout()">⬅ Logout</span>
+      <h2 id="role-title"></h2>
+      <div id="dynamic-section"></div>
+    </div>
+  </div>
+
+  <!-- Detail Modal -->
+  <div id="detailModal" class="modal hidden">
+    <div class="modal-content">
+      <span id="modalClose" class="modal-close">&times;</span>
+      <h4>Details</h4>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <script>
+    // ────────────────────────────────────────────
+    //  Chart Helpers (unchanged)
+    // ────────────────────────────────────────────
+    let amChartInstance, pmChartInstance;
+    function aggregateFieldByShift(f,s){
+      const plans=JSON.parse(localStorage.getItem("labourPlans")||"[]"),
+            out={};
+      plans.forEach(p=>{
+        if(p.shift===s){
+          for(let d in p.departments){
+            const v=parseFloat(p.departments[d][f])||0;
+            out[d]=(out[d]||0)+v;
+          }
+        }
+      });
+      return out;
+    }
+    function generateColors(n){
+      return Array.from({length:n},(_,i)=>`hsl(${i*360/n},70%,50%)`);
+    }
+    function drawAMHoursChart(){
+      const data=aggregateFieldByShift("hours","AM"),
+            labels=Object.keys(data),
+            values=labels.map(l=>data[l]),
+            ctx=document.getElementById("chartAM").getContext("2d");
+      if(amChartInstance) amChartInstance.destroy();
+      amChartInstance=new Chart(ctx,{ type:"bar",
+        data:{ labels, datasets:[{ data:values, backgroundColor:generateColors(labels.length) }]},
+        options:{ plugins:{ legend:{display:false} } }
+      });
+    }
+    function drawAMHeadcountChart(){
+      const data=aggregateFieldByShift("headcount","AM"),
+            labels=Object.keys(data),
+            values=labels.map(l=>data[l]),
+            ctx=document.getElementById("chartAM").getContext("2d");
+      if(amChartInstance) amChartInstance.destroy();
+      amChartInstance=new Chart(ctx,{ type:"bar",
+        data:{ labels, datasets:[{ data:values, backgroundColor:generateColors(labels.length) }]},
+        options:{ plugins:{ legend:{display:false} } }
+      });
+    }
+    function drawAMVolumeChart(){
+      const data=aggregateFieldByShift("volume","AM"),
+            labels=Object.keys(data),
+            values=labels.map(l=>data[l]),
+            ctx=document.getElementById("chartAM").getContext("2d");
+      if(amChartInstance) amChartInstance.destroy();
+      amChartInstance=new Chart(ctx,{ type:"bar",
+        data:{ labels, datasets:[{ data:values, backgroundColor:generateColors(labels.length) }]},
+        options:{ plugins:{ legend:{display:false} } }
+      });
+    }
+    function drawPMHoursChart(){
+      const data=aggregateFieldByShift("hours","PM"),
+            labels=Object.keys(data),
+            values=labels.map(l=>data[l]),
+            ctx=document.getElementById("chartPM").getContext("2d");
+      if(pmChartInstance) pmChartInstance.destroy();
+      pmChartInstance=new Chart(ctx,{ type:"bar",
+        data:{ labels, datasets:[{ data:values, backgroundColor:generateColors(labels.length) }]},
+        options:{ plugins:{ legend:{display:false} } }
+      });
+    }
+    function drawPMHeadcountChart(){
+      const data=aggregateFieldByShift("headcount","PM"),
+            labels=Object.keys(data),
+            values=labels.map(l=>data[l]),
+            ctx=document.getElementById("chartPM").getContext("2d");
+      if(pmChartInstance) pmChartInstance.destroy();
+      pmChartInstance=new Chart(ctx,{ type:"bar",
+        data:{ labels, datasets:[{ data:values, backgroundColor:generateColors(labels.length) }]},
+        options:{ plugins:{ legend:{display:false} } }
+      });
+    }
+    function drawPMVolumeChart(){
+      const data=aggregateFieldByShift("volume","PM"),
+            labels=Object.keys(data),
+            values=labels.map(l=>data[l]),
+            ctx=document.getElementById("chartPM").getContext("2d");
+      if(pmChartInstance) pmChartInstance.destroy();
+      pmChartInstance=new Chart(ctx,{ type:"bar",
+        data:{ labels, datasets:[{ data:values, backgroundColor:generateColors(labels.length) }]},
+        options:{ plugins:{ legend:{display:false} } }
+      });
+    }
+
+    // ────────────────────────────────────────────
+    //  Common & Role Mgmt (unchanged)
+    // ────────────────────────────────────────────
+    function getSelectedWeek(){
+      let w=localStorage.getItem("selectedWeek");
+      if(!w){ w="week1"; localStorage.setItem("selectedWeek",w); }
+      return w;
+    }
+    function changeWeek(n){ localStorage.setItem("selectedWeek",n); loadRawDataEntry(); }
+    function pushCurrentWeek(){
+      const w=document.getElementById("weekSelect").value;
+      localStorage.setItem("activeWeek",w);
+      alert("Current Week set to "+w.toUpperCase());
+      loadRawDataEntry();
+    }
+    function getActiveWeek(){ return localStorage.getItem("activeWeek")||getSelectedWeek(); }
+
+    let currentRole="", selectedDept="", selectedPlan=null, currentCategory="";
+
+    function managerLogin(){
+      const p=prompt("Enter manager password","");
+      if(p==="123") setRole("manager");
+      else if(p!==null) alert("Invalid password!");
+    }
+    function setRole(r){
+      currentRole=r;
+      sessionStorage.setItem("role",r);
+      document.getElementById("login-screen").classList.add("hidden");
+      document.getElementById("app-content").classList.remove("hidden");
+      if(r==="manager"){
+        document.getElementById("role-title").textContent="Manager Dashboard";
+        loadManagerDashboard();
+      } else if(r==="selection"){
+        document.getElementById("role-title").textContent="Selection Availability";
+        loadSelectionAvailability();
+      } else {
+        document.getElementById("role-title").textContent="Labour Planning";
+        loadUserMain();
+      }
+    }
+    function logout(){
+      sessionStorage.clear();
+      location.reload();
+    }
+    function openAdminPanel(){ document.getElementById("adminPanel").classList.remove("hidden"); }
+    function closeAdminPanel(){ document.getElementById("adminPanel").classList.add("hidden"); }
+    function generatePDFReport(){
+      const { jsPDF }=window.jspdf, doc=new jsPDF();
+      const plans=localStorage.getItem("labourPlans")||"[]";
+      const raw=localStorage.getItem("managerRawData")||"{}";
+      doc.setFontSize(16); doc.text("Weekly Labour Plan Report",20,20);
+      doc.setFontSize(12); doc.text("Labour Plans:",20,30);
+      doc.text(JSON.stringify(JSON.parse(plans),null,2),20,40);
+      doc.text("Manager Raw Data:",20,100);
+      doc.text(JSON.stringify(JSON.parse(raw),null,2),20,110);
+      doc.save("Weekly_Labour_Report.pdf");
+    }
+
+    // ────────────────────────────────────────────
+    //  User Functions (only submitWholeDayPlan changed)
+    // ────────────────────────────────────────────
+    function loadUserMain(){
+      document.getElementById("dynamic-section").innerHTML=`
+        <div class="user-tabs">
+          <button class="button active" onclick="setUserTab(this);loadUserView()">Enter Labour Plan</button>
+          <button class="button" onclick="setUserTab(this);loadLabourTransferHoursUser()">Labour Transfer Hours</button>
+        </div><div id="userContent"></div>`;
+      loadUserView();
+    }
+    function setUserTab(b){
+      document.querySelectorAll(".user-tabs .button").forEach(x=>x.classList.remove("active"));
+      b.classList.add("active");
+    }
+    function loadUserView(){
+      document.getElementById("userContent").innerHTML=`
+        <h3>Create Labour Plan</h3>
+        <label>Date:</label><input type="date" id="plan-date"/>
+        <label>Shift:</label><select id="plan-shift">
+          <option value="">Select shift</option><option value="AM">AM</option><option value="PM">PM</option>
+        </select>
+        <button class="button" onclick="createPlan()">Create Plan</button>
+        <hr/>
+        <h3>Department Entry</h3>
+        <div class="category-buttons">
+          <button class="button" onclick="chooseDept('Processing')">Processing</button>
+          <button class="button" onclick="chooseDept('Production')">Production</button>
+        </div>`;
+    }
+    function createPlan(){
+      const date=document.getElementById("plan-date").value;
+      const shift=document.getElementById("plan-shift").value;
+      const today=new Date().toISOString().slice(0,10);
+      if(!date||!shift){ alert("Please fill in both fields."); return; }
+      if(date!==today){ alert("Only today's date allowed: "+today); return; }
+      const plans=JSON.parse(localStorage.getItem("labourPlans")||"[]");
+      if(!plans.some(p=>p.date===date&&p.shift===shift)){
+        plans.push({date,shift,departments:{},locked:false});
+        localStorage.setItem("labourPlans",JSON.stringify(plans));
+        alert("Labour plan created!");
+      } else alert("That plan already exists!");
+    }
+    function chooseDept(cat){
+      currentCategory=cat;
+      const depts = cat==="Processing"
+        ? ["Add On","Top Load","Marshall Apparel","Marshall Beauty/HTPS","Food","Winners Apparel","Winners HTPS","Winners Apparel","Homesense","Footwear","Floor Ready","Almost Store Ready (ASR)","Store Ready","Shipping"]
+        : ["MHE","Layup","Receiving","Data Center"];
+      const c=document.getElementById("userContent");
+      c.innerHTML=`<span class="back-button" onclick="loadUserView()">⬅ Back</span><h3>Select Department (${cat})</h3>`;
+      depts.forEach(d=>{
+        const btn=document.createElement("button");
+        btn.className="button"; btn.textContent=d;
+        btn.onclick=()=>selectPlanForEntry(d);
+        c.appendChild(btn);
+      });
+    }
+    function selectPlanForEntry(d){
+      selectedDept=d;
+      const plans=JSON.parse(localStorage.getItem("labourPlans")||"[]");
+      const c=document.getElementById("userContent");
+      c.innerHTML=`<span class="back-button" onclick="chooseDept(currentCategory)">⬅ Back</span><h3>Select Plan for ${d}</h3>`;
+      plans.forEach(p=>{
+        const btn=document.createElement("button");
+        btn.className="button"; btn.textContent=`${p.date} - ${p.shift}`;
+        btn.onclick=()=>loadEntryForm(p.date,p.shift);
+        c.appendChild(btn);
+      });
+    }
+    function updateHeadcountAndHours(){
+      const hc=parseFloat(document.getElementById("input-headcount").value)||0;
+      document.getElementById("input-hours").value=hc*8;
+      updateVolumeCalc();
+    }
+    function loadEntryForm(date,shift){
+      selectedPlan={date,shift};
+      const plans=JSON.parse(localStorage.getItem("labourPlans")||"[]");
+      const plan=plans.find(p=>p.date===date&&p.shift===shift);
+      const saved=plan.departments[selectedDept]||{headcount:0,hours:0,volume:0,shelf:0,midDayTarget:0,midDayVolume:0,midDayComment:""};
+      const mgr=JSON.parse(localStorage.getItem("managerRawData")||"{}");
+      const raw=(mgr[getActiveWeek()]||{})[selectedDept]||{weeklyTarget:0,weeklyOPH:0,expectedOPH:0};
+      const c=document.getElementById("userContent");
+      c.innerHTML=`
+        <span class="back-button" onclick="chooseDept(currentCategory)">⬅ Back</span>
+        <h3>${selectedDept} Entry – ${date} (${shift})</h3>
+        <label>Total Headcount:</label><input type="number" id="input-headcount" value="${saved.headcount}" oninput="updateHeadcountAndHours()"/>
+        <label>Headcount Hrs:</label><input type="number" id="input-hours" value="${saved.hours}" oninput="updateVolumeCalc()"/>
+        <label>Target OPH:</label><input type="number" id="input-oph" value="${raw.weeklyOPH||0}" readonly/>
+        <label>Expected OPH:</label><input type="number" id="input-expected-oph" value="${raw.expectedOPH||raw.weeklyOPH||0}" readonly/>
+        <label>OPH Volume:</label><input type="number" id="input-volume" value="${saved.volume||0}" readonly/>
+        <label>This Week's Target:</label><input type="number" id="input-weekly-target" value="${raw.weeklyTarget||0}" readonly/>
+        <hr/>
+        <label>Total Shelf:</label><input type="text" id="input-shelf" value="${saved.shelf||""}" oninput="updateVolumeCalc()"/>
+        <p id="excess-hours" class="excess-hours hidden"></p>
+        <button class="button" onclick="submitWholeDayPlan()">Submit Whole Day Plan</button>
+        <hr/>
+        <div class="mid-day-section">
+          <h3>Mid Day Update</h3>
+          <label>Mid Day Target:</label><input type="number" id="input-mid-day-target" value="${saved.midDayTarget||0}" readonly/>
+          <label>Mid Day Volume:</label><input type="number" id="input-mid-day-volume" value="${saved.midDayVolume||0}"/>
+          <label>Reason:</label><textarea id="input-mid-day-comment">${saved.midDayComment||""}</textarea>
+          <button class="button" onclick="submitMidDayUpdate()">Submit Mid Day Update</button>
+        </div>`;
+      updateVolumeCalc();
+      if(parseFloat(document.getElementById("input-mid-day-target").value)===0){
+        document.getElementById("input-mid-day-target").value= parseFloat(document.getElementById("input-volume").value)/2;
+      }
+    }
+    function saveEntryCore(){
+      const hc=parseFloat(document.getElementById("input-headcount").value)||0;
+      const hrs=parseFloat(document.getElementById("input-hours").value)||0;
+      const vol=parseFloat(document.getElementById("input-volume").value)||0;
+      const shelf=parseFloat(document.getElementById("input-shelf").value.replace(/,/g,"."))||0;
+      const midT=parseFloat(document.getElementById("input-mid-day-target").value)||0;
+      const midV=parseFloat(document.getElementById("input-mid-day-volume").value)||0;
+      const cm=document.getElementById("input-mid-day-comment").value.trim();
+      const plans=JSON.parse(localStorage.getItem("labourPlans")||"[]");
+      const plan=plans.find(p=>p.date===selectedPlan.date&&p.shift===selectedPlan.shift);
+      plan.departments[selectedDept]={headcount:hc,hours:hrs,volume:vol,shelf,midDayTarget:midT,midDayVolume:midV,midDayComment:cm};
+      localStorage.setItem("labourPlans",JSON.stringify(plans));
+    }
+
+    // <-- UPDATED submitWholeDayPlan -->
+    function submitWholeDayPlan() {
+      // grab shelf and volume
+      const shelfStr = document.getElementById("input-shelf").value;
+      const shelf    = parseFloat(normalizeNumberInput(shelfStr)) || 0;
+      const vol      = parseFloat(document.getElementById("input-volume").value) || 0;
+
+      // if volume > shelf, ask confirmation
+      if (shelf > 0 && vol > shelf) {
+        const message =
+          `Your OPH Volume (${vol}) exceeds your Total Shelf (${shelf}).\n\n` +
+          `Are you sure you want to submit?`;
+        if (!confirm(message)) {
+          // user clicked “Cancel” → keep editing
+          return;
+        }
+      }
+
+      // otherwise or after OK, save
+      saveEntryCore();
+      alert("Whole Day Plan submitted successfully!");
+    }
+    // ----------------------------------------------------------------
+
+    function submitMidDayUpdate(){
+      const midT=parseFloat(document.getElementById("input-mid-day-target").value)||0;
+      const midV=parseFloat(document.getElementById("input-mid-day-volume").value)||0;
+      const cm=document.getElementById("input-mid-day-comment").value.trim();
+      if(midV<midT&&cm===""){ alert("Please provide a reason."); return; }
+      saveEntryCore();
+      alert("Mid Day Update submitted successfully!");
+    }
+
+    function updateVolumeCalc(){
+      const hrs=parseFloat(document.getElementById("input-hours").value)||0;
+      const eOPH=parseFloat(document.getElementById("input-expected-oph").value)||0;
+      const vol=Math.round(hrs*eOPH);
+      document.getElementById("input-volume").value=vol;
+      const shelf=parseFloat(document.getElementById("input-shelf").value.replace(/,/g,"."))||0;
+      const msg=document.getElementById("excess-hours");
+      if(shelf>0&&vol>shelf){
+        const exU=vol-shelf, exH=eOPH?Math.round((exU/eOPH)*100)/100:0;
+        msg.classList.remove("hidden");
+        msg.innerText=`Exceeds by ${exU} units (≈ ${exH} hrs)`;
+      } else msg.classList.add("hidden");
+    }
+    function normalizeNumberInput(s){
+      s=s.trim();
+      if(!s) return "";
+      if(s.includes(",")&&s.includes(".")){
+        const lc=s.lastIndexOf(","), lp=s.lastIndexOf(".");
+        if(lp>lc) return s.replace(/,/g,"");
+        else return s.replace(/\./g,"").replace(/,/g,".");
+      } else if(s.includes(",")) {
+        return s.replace(/,/g,".");
+      }
+      return s;
+    }
+    function loadLabourTransferHoursUser(){
+      const c=document.getElementById("userContent");
+      c.innerHTML=`<span class="back-button" onclick="loadUserMain()">⬅ Back</span><h3>Labour Transfer Hours</h3>`;
+    }
+
+    // ────────────────────────────────────────────
+    //  Manager Dashboard & Raw Data (unchanged)
+    // ────────────────────────────────────────────
+    function loadManagerDashboard(){
+      document.getElementById("dynamic-section").innerHTML=`
+        <div class="manager-tabs">
+          <button class="button" onclick="loadRawDataEntry()">Raw Data</button>
+          <button class="button" onclick="loadAMDashboard()">AM Dashboard</button>
+          <button class="button" onclick="loadPMDashboard()">PM Dashboard</button>
+          <button class="button" onclick="clearLabourPlans()">Clear All Labour Plans</button>
+        </div>
+        <div id="managerTabContent"></div>`;
+    }
+    function loadRawDataEntry(){
+      const w=getSelectedWeek();
+      const c=document.getElementById("managerTabContent");
+      c.innerHTML=`
+        <h3>Raw Data Entry for ${w.toUpperCase()}</h3>
+        <label>Select Week:</label>
+        <select id="weekSelect" onchange="changeWeek(this.value)">
+          ${[...Array(52)].map((_,i)=>`<option value="week${i+1}"${"week"+(i+1)===w?" selected":""}>Week ${i+1}</option>`).join("")}
+        </select>
+        <button class="button" onclick="pushCurrentWeek()">Current Week</button>
+        <div class="dept-buttons"></div>`;
+      const depts=["Add On","Top Load","Marshall Apparel","Marshall Beauty/HTPS","Food","Winners Apparel","Winners HTPS","Winners Apparel","Homesense","Footwear","Floor Ready","Almost Store Ready (ASR)","Store Ready"];
+      const db=c.querySelector(".dept-buttons");
+      depts.forEach(d=>{
+        const b=document.createElement("button");
+        b.className="button"; b.textContent=d;
+        b.onclick=()=>loadDepartmentRawDataForm(d);
+        db.appendChild(b);
+      });
+    }
+    function loadDepartmentRawDataForm(dept){
+      const w=getSelectedWeek();
+      const mgr=JSON.parse(localStorage.getItem("managerRawData")||"{}");
+      const data=(mgr[w]||{})[dept]||{weeklyTarget:"",weeklyOPH:"",expectedOPH:""};
+      const c=document.getElementById("managerTabContent");
+      c.innerHTML=`
+        <span class="back-button" onclick="loadRawDataEntry()">⬅ Back</span>
+        <h3>Raw Data for ${dept} (${w.toUpperCase()})</h3>
+        <label>Weekly Target:</label><input type="number" id="dept-weekly-target" value="${data.weeklyTarget}"/>
+        <label>Weekly OPH:</label><input type="number" id="dept-weekly-oph" value="${data.weeklyOPH}"/>
+        <label>Expected OPH:</label><input type="number" id="dept-expected-oph" value="${data.expectedOPH||data.weeklyOPH}" readonly/>
+        <div>
+          <button class="button" onclick="updateExpectedOPH('dept-expected-oph',0.05)">+5%</button>
+          <button class="button" onclick="updateExpectedOPH('dept-expected-oph',0.10)">+10%</button>
+          <button class="button" onclick="updateExpectedOPH('dept-expected-oph',0.15)">+15%</button>
+          <button class="button" onclick="updateExpectedOPH('dept-expected-oph',0.20)">+20%</button>
+          <button class="button" onclick="updateExpectedOPH('dept-expected-oph',0.25)">+25%</button>
+        </div>
+        <button class="button" onclick="saveDeptRawData('${dept}')">Save</button>`;
+    }
+    function updateExpectedOPH(id,inc){
+      const v=parseFloat(document.getElementById("dept-weekly-oph").value)||0;
+      document.getElementById(id).value=Math.round(v*(1+inc)*100)/100;
+    }
+    function saveDeptRawData(dept){
+      const w=getSelectedWeek();
+      const mgr=JSON.parse(localStorage.getItem("managerRawData")||"{}");
+      if(!mgr[w]) mgr[w]={};
+      mgr[w][dept]={
+        weeklyTarget:document.getElementById("dept-weekly-target").value,
+        weeklyOPH:document.getElementById("dept-weekly-oph").value,
+        expectedOPH:document.getElementById("dept-expected-oph").value
+      };
+      localStorage.setItem("managerRawData",JSON.stringify(mgr));
+      alert(`Saved raw data for ${dept}`);
+    }
+    function clearLabourPlans(){
+      localStorage.removeItem("labourPlans");
+      alert("Cleared all labour plans");
+      loadManagerDashboard();
+    }
+    function loadAMDashboard(){
+      const c=document.getElementById("managerTabContent");
+      c.innerHTML=`
+        <h3>AM Shift Dashboard</h3>
+        <button class="button" onclick="drawAMHoursChart()">Total Hours</button>
+        <button class="button" onclick="drawAMHeadcountChart()">Total Headcount</button>
+        <button class="button" onclick="drawAMVolumeChart()">OPH Volume</button>
+        <canvas id="chartAM"></canvas>`;
+    }
+    function loadPMDashboard(){
+      const c=document.getElementById("managerTabContent");
+      c.innerHTML=`
+        <h3>PM Shift Dashboard</h3>
+        <button class="button" onclick="drawPMHoursChart()">Total Hours</button>
+        <button class="button" onclick="drawPMHeadcountChart()">Total Headcount</button>
+        <button class="button" onclick="drawPMVolumeChart()">OPH Volume</button>
+        <canvas id="chartPM"></canvas>`;
+    }
+
+    // ────────────────────────────────────────────
+    //  Selection Availability + Persistence
+    // ────────────────────────────────────────────
+    const selDeps=[
+      "Winners Apparel Total","Marshalls Apparel Total","Top Load Total","Add On Total","ASR Total",
+      "Food Total","Footwear Total","HomeSense Conveyor Total","Marshalls Conveyor Total",
+      "Store Ready Total","Winners Conveyor Total"
+    ];
+    let actualDataMap={};
+
+    function loadSelectionAvailability(){
+      document.getElementById("dynamic-section").innerHTML=`
+        <h2>Selection Availability</h2>
+        <div id="selectionUploadSection"> 
+          <h3>Upload Selection Data File (Units)</h3>
+          <input type="file" id="selectionFile" accept=".xlsx,.xls"/><br>
+          <button class="button" onclick="processSelectionFile()">Upload and Process</button>
+          <button class="button" onclick="clearSelection()">Clear</button>
+        </div>
+        <hr>
+        <div id="selectionDataDisplay">
+          <h3>Selection Data Summary</h3>
+          <div id="selectionTable"></div>
+        </div>`;
+
+      // restore if present
+      const shelfJson=localStorage.getItem("selectionShelfData");
+      const actualRaw=localStorage.getItem("selectionActualData");
+      if(shelfJson){
+        actualDataMap=actualRaw?JSON.parse(actualRaw):{};
+        displaySelectionDataFromJson(JSON.parse(shelfJson));
+      }
+    }
+
+    function processSelectionFile(){
+      const f=document.getElementById("selectionFile");
+      if(!f.files.length){ alert("Please select a file."); return; }
+      const reader=new FileReader();
+      reader.onload=e=>{
+        const data=new Uint8Array(e.target.result),
+              wb=XLSX.read(data,{type:"array"});
+
+        // Shelf_Units
+        const wsSU=wb.Sheets["Shelf_Units"];
+        if(!wsSU){ alert("Shelf_Units sheet not found!"); return; }
+        const shelfJson=XLSX.utils.sheet_to_json(wsSU,{header:1,defval:""});
+
+        // Actual
+        actualDataMap={};
+        const wsAct=wb.Sheets["Actual"];
+        if(wsAct){
+          const actJson=XLSX.utils.sheet_to_json(wsAct,{header:1,defval:""});
+          const hdr=actJson[0].map(h=>h.toString().trim().toLowerCase());
+          const idxArea=hdr.indexOf("group");
+          const idxRacks=hdr.indexOf("racks");
+          const idxRecv=hdr.findIndex(c=>c.includes("receiv"));
+          const idxStage=hdr.findIndex(c=>c.includes("staging")||c.includes("ticket"));
+          actJson.slice(1).forEach(r=>{
+            const key=(r[idxArea]||"").toString().trim().toLowerCase();
+            if(key){
+              actualDataMap[key]={
+                staging: r[idxStage]||0,
+                receiving: r[idxRecv]||0,
+                racks: r[idxRacks]||0
+              };
+            }
+          });
+        }
+
+        localStorage.setItem("selectionShelfData",JSON.stringify(shelfJson));
+        localStorage.setItem("selectionActualData",JSON.stringify(actualDataMap));
+
+        displaySelectionDataFromJson(shelfJson);
+      };
+      reader.readAsArrayBuffer(f.files[0]);
+    }
+
+    function displaySelectionDataFromJson(su){
+      let html=`<table class="selection-table"><thead><tr>
+        <th>Area</th><th>Planning</th><th>Distrd Total</th><th>In Area Total</th>
+      </tr></thead><tbody>`;
+      selDeps.forEach(dep=>{
+        const row=su.find(r=>(r[0]||"").toString().trim().toLowerCase()===dep.toLowerCase());
+        const plan=row?row[1]:"", dist=row?row[2]:"", inA=row?row[3]:"";
+        html+=`<tr>
+          <td>${dep}</td>
+          <td>${plan}</td>
+          <td>${dist}</td>
+          <td>${inA}
+            <button class="button" style="padding:4px 8px;font-size:12px"
+              onclick="showModal('${dep.toLowerCase()}')">View</button>
+          </td>
+        </tr>`;
+      });
+      html+="</tbody></table>";
+      document.getElementById("selectionTable").innerHTML=html;
+    }
+
+    function clearSelection(){
+      localStorage.removeItem("selectionShelfData");
+      localStorage.removeItem("selectionActualData");
+      document.getElementById("selectionTable").innerHTML="";
+      document.getElementById("selectionFile").value="";
+      actualDataMap={};
+    }
+
+    function showModal(areaKey){
+      const d=actualDataMap[areaKey]||{staging:0,receiving:0,racks:0},
+            mb=document.getElementById("modalBody");
+      mb.innerHTML=`
+        <canvas id="modalChart" width="280" height="280"></canvas>
+        <div style="text-align:right;margin-top:8px">
+          <span style="display:inline-block;width:12px;height:12px;background:green;margin-right:6px"></span>
+            Staging/Ticketing (${d.staging})
+          <span style="display:inline-block;width:12px;height:12px;background:yellow;margin:0 6px"></span>
+            Receiving (${d.receiving})
+          <span style="display:inline-block;width:12px;height:12px;background:red;margin:0 6px"></span>
+            Racks (${d.racks})
+        </div>`;
+      const ctx=document.getElementById("modalChart").getContext("2d");
+      new Chart(ctx,{ type:"pie",
+        data:{ labels:["Staging/Ticketing","Receiving","Racks"],
+               datasets:[{ data:[d.staging,d.receiving,d.racks],
+                           backgroundColor:["green","yellow","red"] }] },
+        options:{ plugins:{ legend:{display:false},
+                           datalabels:{ color:"white", formatter:v=>v, anchor:"center", align:"center", font:{weight:"bold"} }
+                         }
+               }
+      });
+      document.getElementById("detailModal").classList.remove("hidden");
+    }
+    document.getElementById("modalClose").onclick = ()=>{
+      document.getElementById("detailModal").classList.add("hidden");
+    };
+
+    // Initialize
+    window.onload = ()=>{
+      document.getElementById("login-screen").classList.remove("hidden");
+      document.getElementById("app-content").classList.add("hidden");
+    };
+  </script>
+</body>
+</html>
